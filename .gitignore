@@ -1,0 +1,31 @@
+# Ympäristömuuttujat (tärkein)
+.env
+.env.local
+
+# Riippuvuudet
+/node_modules
+
+# Buildit (jos joskus buildaat TypeScriptistä tms.)
+/build
+/dist
+
+# Lokit
+logs
+*.log
+npm-debug.log*
+
+# Test coverage
+/coverage
+*.lcov
+
+# SQL-dumpit
+*.sql
+*.dump
+
+# OS roskat ja editorit
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea
