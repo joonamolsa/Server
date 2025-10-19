@@ -20,7 +20,9 @@ let pool;
   });
 })();
 
-// CONTACTS  GET /api/contacts?q=...
+const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+// CONTACTS  GET /api/contacts
 app.get("/api/contacts", async (req, res) => {
   const { q, name, phone, city } = req.query;
   const where = [],
@@ -48,7 +50,7 @@ app.get("/api/contacts", async (req, res) => {
   res.json(rows);
 });
 
-// CONTACTS POST: lisää kontakti
+// CONTACTS POST /api/contacts
 app.post("/api/contacts", async (req, res) => {
   const { name, phone, city } = req.body; // ← lisää city
   if (!name || !phone)
@@ -67,7 +69,7 @@ app.post("/api/contacts", async (req, res) => {
   }
 });
 
-// CONTACTS PUT: muokkaa kontaktia
+// CONTACTS PUT /api/contacts/:id
 app.put("/api/contacts/:id", async (req, res) => {
   const { id } = req.params;
   const { name, phone, city } = req.body; // ← lisää city
@@ -86,7 +88,7 @@ app.put("/api/contacts/:id", async (req, res) => {
   }
 });
 
-// CONTACTS DELETE: poista
+// CONTACTS DELETE /api/contacts/:id
 app.delete("/api/contacts/:id", async (req, res) => {
   const { id } = req.params;
   try {
@@ -99,7 +101,7 @@ app.delete("/api/contacts/:id", async (req, res) => {
   }
 });
 
-// COMPANIES  GET /api/companies?q=...
+// COMPANIES  GET /api/companies
 app.get("/api/companies", async (req, res) => {
   const { q, name, phone, city } = req.query;
   const where = [],
@@ -161,56 +163,82 @@ app.delete("/api/companies/:id", async (req, res) => {
   res.status(204).end();
 });
 
-// YELLOW PAGES GET /api/yellow-pages?item_name=&city=&price_min=&price_max=&phone=&q=
+// YELLOW PAGES GET /api/yellow-pages
 app.get("/api/yellow-pages", async (req, res) => {
-  const { item_name, city, price_min, price_max, phone, q } = req.query;
-  const where = [];
-  const params = [];
+  try {
+    const { item_name, city, price_min, price_max, phone, q } = req.query;
+    const where = [],
+      params = [];
+    const like = (v) => `%${v}%`;
 
-  if (item_name) {
-    where.push("item_name LIKE ?");
-    params.push(`%${item_name}%`);
-  }
-  if (city) {
-    where.push("city LIKE ?");
-    params.push(`%${city}%`);
-  }
-  if (phone) {
-    where.push("phone LIKE ?");
-    params.push(`%${phone}%`);
-  }
-  if (price_min) {
-    where.push("price >= ?");
-    params.push(Number(price_min));
-  }
-  if (price_max) {
-    where.push("price <= ?");
-    params.push(Number(price_max));
-  }
-  if (q) {
-    // vapaa teksti: hae nimestä, kuvauksesta, paikkakunnasta ja puhelimesta
-    where.push(
-      "(item_name LIKE ? OR description LIKE ? OR city LIKE ? OR phone LIKE ?)"
-    );
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
-  }
+    if (item_name) {
+      where.push("item_name LIKE ?");
+      params.push(like(item_name));
+    }
+    if (city) {
+      where.push("city LIKE ?");
+      params.push(like(city));
+    }
+    if (phone) {
+      where.push("phone LIKE ?");
+      params.push(like(phone));
+    }
 
-  const sql = `SELECT * FROM yellow_pages ${
-    where.length ? "WHERE " + where.join(" AND ") : ""
-  } ORDER BY id DESC`;
-  const [rows] = await pool.query(sql, params);
-  res.json(rows);
+    const toNum = (v) => {
+      const n = Number(String(v).replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    };
+    const pmin = toNum(price_min),
+      pmax = toNum(price_max);
+    if (pmin !== null) {
+      where.push("price >= ?");
+      params.push(pmin);
+    }
+    if (pmax !== null) {
+      where.push("price <= ?");
+      params.push(pmax);
+    }
+
+    if (q) {
+      const L = like(q);
+      where.push(
+        "(item_name LIKE ? OR description LIKE ? OR city LIKE ? OR phone LIKE ?)"
+      );
+      params.push(L, L, L, L);
+    }
+
+    const sql = `SELECT * FROM yellow_pages ${
+      where.length ? "WHERE " + where.join(" AND ") : ""
+    } ORDER BY id DESC`;
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /api/yellow-pages ERR", e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // YELLOW PAGES POST /api/yellow-pages
 app.post("/api/yellow-pages", async (req, res) => {
-  const { item_name, description, price, city, phone } = req.body;
+  const { item_name, description, price, city, phone, posted_date, image_url } =
+    req.body;
   if (!item_name || price == null)
     return res.status(400).json({ error: "item_name and price required" });
 
+  const dateVal = isDate(posted_date) ? posted_date : null;
+
   const [r] = await pool.execute(
-    "INSERT INTO yellow_pages (item_name, description, price, phone, city) VALUES (?, ?, ?, ?, ?)",
-    [item_name, description ?? null, price, phone ?? null, city ?? null]
+    `INSERT INTO yellow_pages (item_name, description, price, phone, city, posted_date, image_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      item_name,
+      description ?? null,
+      price,
+      phone ?? null,
+      city ?? null,
+      dateVal,
+      image_url ?? null,
+    ]
   );
   const [rows] = await pool.query("SELECT * FROM yellow_pages WHERE id=?", [
     r.insertId,
@@ -221,10 +249,25 @@ app.post("/api/yellow-pages", async (req, res) => {
 // YELLOW PAGES PUT /api/yellow-pages/:id
 app.put("/api/yellow-pages/:id", async (req, res) => {
   const { id } = req.params;
-  const { item_name, description, price, city, phone } = req.body;
+  const { item_name, description, price, city, phone, posted_date, image_url } =
+    req.body;
+
+  const dateVal = isDate(posted_date) ? posted_date : null;
+
   await pool.execute(
-    "UPDATE yellow_pages SET item_name=?, description=?, price=?, phone=?, city=? WHERE id=?",
-    [item_name, description ?? null, price, phone ?? null, city ?? null, id]
+    `UPDATE yellow_pages
+     SET item_name=?, description=?, price=?, phone=?, city=?, posted_date=?, image_url=?
+     WHERE id=?`,
+    [
+      item_name,
+      description ?? null,
+      price,
+      phone ?? null,
+      city ?? null,
+      dateVal,
+      image_url ?? null,
+      id,
+    ]
   );
   const [rows] = await pool.query("SELECT * FROM yellow_pages WHERE id=?", [
     id,
